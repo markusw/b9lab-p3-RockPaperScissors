@@ -1,0 +1,23 @@
+{
+  "name": "b9lab-p3-rpsgame",
+  "version": "1.0.0",
+  "description": "RockPaperScissors Smart Contract",
+  "main": "truffle-config.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Markus",
+  "license": "ISC",
+  "devDependencies": {
+    "truffle": "^5.0.31",
+    "truffle-assertions": "^0.9.1"
+  },
+  "dependencies": {
+    "jquery": "^3.4.1",
+    "truffle-contract": "^4.0.28",
+    "web3": "^1.2.1"
+  }
+}
