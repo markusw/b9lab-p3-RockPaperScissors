@@ -23,12 +23,15 @@ contract RockPaperScissors is Stoppable {
 
     event LogNewGameStarted(
         address indexed player1,
-        uint indexed bet,
-        uint indexed expiry
+        uint bet,
+        uint expiry
+    );
+    event LogPlayer2Joined(
+        address indexed player2,
+        uint bet
     );
     event LogPlayer2Moved(
         address indexed player2,
-        uint indexed bet,
         Moves indexed player2Move
     );
     event LogFeePaid(
@@ -38,11 +41,11 @@ contract RockPaperScissors is Stoppable {
     event LogGameDraw(
         address indexed player1,
         address indexed player2,
-        uint indexed bet
+        uint bet
     );
     event LogGameWinner(
         address indexed winner,
-        uint indexed bet
+        uint bet
     );
     event LogRefunded(
         address indexed refundAddress,
@@ -61,7 +64,7 @@ contract RockPaperScissors is Stoppable {
     function generateGameHash(Moves move, bytes32 secret) public view returns(bytes32 gameHash) {
         require(move != Moves.None, "Invalid move");
 
-        return keccak256(abi.encodePacked(move, secret, msg.sender, address(this)));
+        return keccak256(abi.encodePacked(move, secret, address(msg.sender), address(this)));
     }
 
     function newGame(bytes32 gameHash, uint expiry) public payable onlyIfRunning returns(bool success) {
@@ -81,20 +84,19 @@ contract RockPaperScissors is Stoppable {
             betAmount = msg.value;
         }
 
-        games[gameHash] = Game(
-            betAmount,
-            now.add(expiry),
-            address(0x0),
-            Moves.None
-            );
+        games[gameHash].bet = betAmount;
+        games[gameHash].expiry = now.add(expiry);
 
         emit LogNewGameStarted(msg.sender, betAmount, expiry);
 
         return true;
     }
 
-    function secondMove(bytes32 gameHash, Moves move2) public payable onlyIfRunning returns(bool success) {
-        require(move2 != Moves.None, "Invalid move");
+    function joinGame(bytes32 gameHash) public payable onlyIfRunning returns(bool success) {
+        // player 2 needs to join the game before making a move to avoid front-running
+        require(games[gameHash].player2 == address(0x0), "Someone already joined this game");
+        require(games[gameHash].expiry > now, "Game expired or doesn't exist");
+
         uint betAmount;
 
         if (msg.value > fee) {
@@ -107,15 +109,25 @@ contract RockPaperScissors is Stoppable {
             betAmount = msg.value;
         }
 
-        require(games[gameHash].move2 == Moves.None, "Player 2 already moved");
         require(games[gameHash].bet == betAmount, "Bet of player 1 not matched");
-        require(games[gameHash].expiry > now, "Game expired");
+
+        games[gameHash].player2 = msg.sender;
+
+        emit LogPlayer2Joined(msg.sender, betAmount);
+
+        return true;
+    }
+
+    function secondMove(bytes32 gameHash, Moves move2) public onlyIfRunning returns(bool success) {
+        require(move2 != Moves.None, "Invalid move");
+        require(games[gameHash].expiry > now, "Game expired or doesn't exist");
+        require(games[gameHash].player2 == msg.sender, "Only player 2 can make a move");
+        require(games[gameHash].move2 == Moves.None, "Player 2 already moved");
 
         games[gameHash].expiry = now.add(timeToEnd);
-        games[gameHash].player2 = msg.sender;
         games[gameHash].move2 = move2;
 
-        emit LogPlayer2Moved(msg.sender, betAmount, move2);
+        emit LogPlayer2Moved(msg.sender, move2);
 
         return true;
     }
@@ -125,7 +137,6 @@ contract RockPaperScissors is Stoppable {
         Moves move2 = games[gameHash].move2;
 
         require(move2 != Moves.None, "Player 2 didn't make a move yet");
-        require(games[gameHash].expiry > now, "Game expired or doesn't exist");
 
         address player2 = games[gameHash].player2;
         uint betAmount = games[gameHash].bet;
@@ -138,24 +149,26 @@ contract RockPaperScissors is Stoppable {
         } else {
             address winner;
 
-            if (uint(move) == 1) {
-                if (uint(move2) == 2) {
+            if (move == Moves.Rock) {
+                if (move2 == Moves.Paper) {
                     winner = player2;
-                } else if (uint(move2) == 3) {
+                } else if (move2 == Moves.Scissors) {
                     winner = msg.sender;
                 }
-            } else if (uint(move) == 2) {
-                if (uint(move2) == 1) {
+            } else if (move == Moves.Paper) {
+                if (move2 == Moves.Rock) {
                     winner = msg.sender;
-                } else if (uint(move2) == 3) {
+                } else if (move2 == Moves.Scissors) {
                     winner = player2;
                 }
-            } else if (uint(move) == 3) {
-                if (uint(move2) == 1) {
+            } else if (move == Moves.Scissors) {
+                if (move2 == Moves.Rock) {
                     winner = player2;
-                } else if (uint(move2) == 2) {
+                } else if (move2 == Moves.Paper) {
                     winner = msg.sender;
                 }
+            } else {
+                revert("Invalid move");
             }
 
             balances[winner] = balances[winner].add(betAmount.mul(2));
@@ -183,6 +196,8 @@ contract RockPaperScissors is Stoppable {
         emit LogRefunded(msg.sender, refundAmount);
 
         delete games[gameHash].bet;
+        delete games[gameHash].player2;
+        delete games[gameHash].move2;
 
         return true;
     }

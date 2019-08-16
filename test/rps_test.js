@@ -19,15 +19,20 @@ contract("RockPaperScissors", accounts => {
 
     beforeEach("Get new contract before each test", async () => {
         instance = await RockPaperScissors.new(fee, timeToEnd, true, {from: owner});
+        gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
+        betAmount = 500;
     });
 
     describe("Test game bets", async () => {
         it("Should be possible to start new game and pay fees", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
 
             const txObj = await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
 
+            // check number of events
+            assert.equal(txObj.logs.length, 2, "Wrong number of events");
+            // check order of events
+            assert.equal(txObj.logs[0].event, "LogFeePaid");
+            assert.equal(txObj.logs[1].event, "LogNewGameStarted");
             // check event
             truffleAssert.eventEmitted(txObj, "LogNewGameStarted", {
                 player1: player1, 
@@ -45,27 +50,44 @@ contract("RockPaperScissors", accounts => {
             assert.equal(game.bet.toString(), (betAmount - fee).toString(), "Didn't credit bet amount correctly");
         });
 
-        it("Should be possible for player 2 to make a move", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
+        it("Should be possible for player 2 to join the game", async () => {
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
 
-            const txObj = await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            const txObj = await instance.joinGame(gameHash, {from: player2, value: betAmount});
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogPlayer2Moved", {player2: player2, bet: toBN(betAmount - fee), player2Move: toBN(moves["Paper"])});
+            truffleAssert.eventEmitted(txObj, "LogPlayer2Joined", {player2: player2, bet: toBN(betAmount - fee)});
             truffleAssert.eventEmitted(txObj, "LogFeePaid", {sender: player2, amount: toBN(fee)});
 
+            const game = await instance.games(gameHash);
+            assert.equal(game.player2, player2);
+
+        });
+
+        it("Should only be possible for player 2 to make a move", async () => {
+            await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+
+            try {
+                await instance.secondMove(gameHash, moves["Paper"], {from: otherAddress});
+            }
+            catch (err) {
+                assert.equal(err.reason, "Only player 2 can make a move");
+            }
+            
+            const txObj = await instance.secondMove(gameHash, moves["Paper"], {from: player2});
+
+            // check event
+            truffleAssert.eventEmitted(txObj, "LogPlayer2Moved", {player2: player2, player2Move: toBN(moves["Paper"])});
 
             const game = await instance.games(gameHash);
             assert.equal(game.move2, moves["Paper"], "Saved wrong move");
         });
 
         it("Should let player 1 end the game after both players made a move", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
@@ -80,8 +102,6 @@ contract("RockPaperScissors", accounts => {
     });
     describe("Test refunds for failed games", async () => {
         it("Should refund p1 bet if p2 doesn't make a move before deadline", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
 
             // Shouldn't work before deadline is over
@@ -104,12 +124,11 @@ contract("RockPaperScissors", accounts => {
             const newBalance = await instance.balances(player1)
             assert.equal(newBalance.toString(), (betAmount - fee).toString());
         });
-        it("Should refund p2 if p1 fails to close the game", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
-            await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
 
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+        it("Should refund p2 if p1 fails to close the game", async () => {
+            await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             // Shouldn't work if not expired
             try {
@@ -132,12 +151,11 @@ contract("RockPaperScissors", accounts => {
     });
     describe("Test game logic", async () => {
         it("Should handle a draw correctly", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Paper"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Rock"], {from: player2});
 
-            const txObj = await instance.decideGame(moves["Paper"], secret, {from: player1})
+            const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
             // check event
             truffleAssert.eventEmitted(txObj, "LogGameDraw", {player1: player1, player2: player2, bet: toBN(betAmount - fee)});
@@ -150,10 +168,9 @@ contract("RockPaperScissors", accounts => {
         });
 
         it("Rock should beat scissors", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Scissors"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Scissors"], {from: player2});
 
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
@@ -166,10 +183,10 @@ contract("RockPaperScissors", accounts => {
         });
 
         it("Scissors should beat paper", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
             const gameHash = await instance.generateGameHash(moves["Scissors"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             const txObj = await instance.decideGame(moves["Scissors"], secret, {from: player1})
 
@@ -180,11 +197,11 @@ contract("RockPaperScissors", accounts => {
 
             assert.equal(winningAmount.toString(), winnerBalance.toString());
         });
+
         it("Paper should beat Rock", async () => {
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1});
 
@@ -199,10 +216,9 @@ contract("RockPaperScissors", accounts => {
     describe("Test withdrawal of balance", async () => {
         it("Should be possible for players to withdraw their balance", async () => {
             // play game
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
             await instance.decideGame(moves["Rock"], secret, {from: player1});
 
             const balanceBefore = toBN(await web3.eth.getBalance(player2));
@@ -230,12 +246,12 @@ contract("RockPaperScissors", accounts => {
 
             assert.equal(ethExpected.toString(), actualBalance.toString());
         });
+
         it("Should be possible for owner to withdraw fees", async () => {
             // play game
-            const betAmount = web3.utils.toWei("1", "Ether");
-            const gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
-            await instance.secondMove(gameHash, moves["Paper"], {from: player2, value: betAmount});
+            await instance.joinGame(gameHash, {from: player2, value: betAmount});
+            await instance.secondMove(gameHash, moves["Paper"], {from: player2});
             await instance.decideGame(moves["Rock"], secret, {from: player1});
 
             const feesPaid = toBN(fee * 2);
