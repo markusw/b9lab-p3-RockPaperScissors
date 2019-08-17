@@ -19,7 +19,7 @@ contract("RockPaperScissors", accounts => {
 
     beforeEach("Get new contract before each test", async () => {
         instance = await RockPaperScissors.new(fee, timeToEnd, true, {from: owner});
-        gameHash = await instance.generateGameHash(moves["Rock"], secret, {from: player1});
+        gameHash = await instance.generateGameHash(moves["Rock"], secret, player1, {from: player1});
         betAmount = 500;
     });
 
@@ -35,11 +35,12 @@ contract("RockPaperScissors", accounts => {
             assert.equal(txObj.logs[1].event, "LogNewGameStarted");
             // check event
             truffleAssert.eventEmitted(txObj, "LogNewGameStarted", {
+                gameHash: gameHash,
                 player1: player1, 
                 bet: toBN(betAmount - fee), 
                 expiry: toBN(expiry)
             });
-            truffleAssert.eventEmitted(txObj, "LogFeePaid", {sender: player1, amount: toBN(fee)});
+            truffleAssert.eventEmitted(txObj, "LogFeePaid", {gameHash: gameHash, sender: player1, amount: toBN(fee)});
 
             // check fee
             const feeBalance = await instance.balances(owner);
@@ -56,8 +57,8 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.joinGame(gameHash, {from: player2, value: betAmount});
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogPlayer2Joined", {player2: player2, bet: toBN(betAmount - fee)});
-            truffleAssert.eventEmitted(txObj, "LogFeePaid", {sender: player2, amount: toBN(fee)});
+            truffleAssert.eventEmitted(txObj, "LogFeePaid", {gameHash: gameHash, sender: player2, amount: toBN(fee)});
+            truffleAssert.eventEmitted(txObj, "LogPlayer2Joined", {gameHash: gameHash, player2: player2});
 
             const game = await instance.games(gameHash);
             assert.equal(game.player2, player2);
@@ -78,7 +79,7 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogPlayer2Moved", {player2: player2, player2Move: toBN(moves["Paper"])});
+            truffleAssert.eventEmitted(txObj, "LogPlayer2Moved", {gameHash: gameHash, player2: player2, player2Move: toBN(moves["Paper"])});
 
             const game = await instance.games(gameHash);
             assert.equal(game.move2, moves["Paper"], "Saved wrong move");
@@ -92,7 +93,7 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogGameWinner", {winner: player2, bet: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogGameWinner", {gameHash: gameHash, winner: player2, bet: toBN(betAmount - fee)});
 
             const winnerBalance = await instance.balances(player2);
             const winningAmount = (toBN(betAmount).sub(toBN(fee))).mul(toBN(2));
@@ -118,7 +119,7 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.refundPlayer1(moves["Rock"], secret, {from: player1});
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogRefunded", {refundAddress: player1, refundAmount: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogRefunded", {gameHash: gameHash, refundAddress: player1, refundAmount: toBN(betAmount - fee)});
 
             // check balance after refund
             const newBalance = await instance.balances(player1)
@@ -143,7 +144,7 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.refundPlayer2(gameHash, {from: player2});
             const refundAmount = (toBN(betAmount).sub(toBN(fee))).mul(toBN(2));
 
-            truffleAssert.eventEmitted(txObj, "LogRefunded", {refundAddress: player2, refundAmount: refundAmount});
+            truffleAssert.eventEmitted(txObj, "LogRefunded", {gameHash: gameHash, refundAddress: player2, refundAmount: refundAmount});
 
             const p2Balance = await instance.balances(player2);
             assert.equal(p2Balance.toString(), refundAmount.toString());
@@ -158,7 +159,7 @@ contract("RockPaperScissors", accounts => {
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
             // check event
-            truffleAssert.eventEmitted(txObj, "LogGameDraw", {player1: player1, player2: player2, bet: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogGameDraw", {gameHash: gameHash, player1: player1, player2: player2, bet: toBN(betAmount - fee)});
 
             // check balances
             const p1Balance = await instance.balances(player1);
@@ -174,7 +175,7 @@ contract("RockPaperScissors", accounts => {
 
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1})
 
-            truffleAssert.eventEmitted(txObj, "LogGameWinner", {winner: player1, bet: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogGameWinner", {gameHash: gameHash, winner: player1, bet: toBN(betAmount - fee)});
 
             const winningAmount = (toBN(betAmount).sub(toBN(fee))).mul(toBN(2));
             const winnerBalance = await instance.balances(player1);
@@ -183,14 +184,14 @@ contract("RockPaperScissors", accounts => {
         });
 
         it("Scissors should beat paper", async () => {
-            const gameHash = await instance.generateGameHash(moves["Scissors"], secret, {from: player1});
+            const gameHash = await instance.generateGameHash(moves["Scissors"], secret, player1, {from: player1});
             await instance.newGame(gameHash, expiry, {from: player1, value: betAmount});
             await instance.joinGame(gameHash, {from: player2, value: betAmount});
             await instance.secondMove(gameHash, moves["Paper"], {from: player2});
 
             const txObj = await instance.decideGame(moves["Scissors"], secret, {from: player1})
 
-            truffleAssert.eventEmitted(txObj, "LogGameWinner", {winner: player1, bet: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogGameWinner", {gameHash: gameHash, winner: player1, bet: toBN(betAmount - fee)});
 
             const winningAmount = (toBN(betAmount).sub(toBN(fee))).mul(toBN(2));
             const winnerBalance = await instance.balances(player1);
@@ -205,7 +206,7 @@ contract("RockPaperScissors", accounts => {
 
             const txObj = await instance.decideGame(moves["Rock"], secret, {from: player1});
 
-            truffleAssert.eventEmitted(txObj, "LogGameWinner", {winner: player2, bet: toBN(betAmount - fee)});
+            truffleAssert.eventEmitted(txObj, "LogGameWinner", {gameHash: gameHash, winner: player2, bet: toBN(betAmount - fee)});
 
             const winningAmount = (toBN(betAmount).sub(toBN(fee))).mul(toBN(2));
             const winnerBalance = await instance.balances(player2);
