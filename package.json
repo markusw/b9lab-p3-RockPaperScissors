@@ -16,7 +16,7 @@
     "truffle-assertions": "^0.9.1"
   },
   "dependencies": {
-    "jquery": "^3.4.1",
+    "jquery": "^3.5.0",
     "truffle-contract": "^4.0.28",
     "web3": "^1.2.1"
   }
